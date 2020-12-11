@@ -4,13 +4,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Check it satisfies the interface
-var _ pflag.Value = (*BwTimetable)(nil)
+var _ flagger = (*BwTimetable)(nil)
 
 func TestBwTimetableSet(t *testing.T) {
 	for _, test := range []struct {
