@@ -198,6 +198,17 @@ func (jobs *Jobs) NewJob(ctx context.Context, fn rc.Func, in rc.Params) (job *Jo
 		ctx = context.Background() // unlink this job from the current context
 	}
 
+	// See if _config is set and if so make a new context with it
+	if _, ok := in["_config"]; ok {
+		newCtx, ci := fs.AddConfig(ctx)
+		err = in.GetStruct("_config", ci)
+		if err != nil {
+			return nil, nil, err
+		}
+		delete(in, "_config") // remove the parameter
+		ctx = newCtx          // replace the context
+	}
+
 	group := getGroup(in)
 	if group == "" {
 		group = fmt.Sprintf("job/%d", id)
