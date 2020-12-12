@@ -184,9 +184,19 @@ func getGroup(in rc.Params) string {
 	return group
 }
 
-// NewJob creates a Job ready to be executed
-func (jobs *Jobs) NewJob(ctx context.Context, in rc.Params) (*Job, context.Context) {
+// NewJob creates a Job and executes it, possibly in the background if _async is set
+func (jobs *Jobs) NewJob(ctx context.Context, fn rc.Func, in rc.Params) (job *Job, out rc.Params, err error) {
 	id := atomic.AddInt64(&jobID, 1)
+
+	// See if _async is set
+	isAsync, err := in.GetBool("_async")
+	if rc.NotErrParamNotFound(err) {
+		return nil, nil, err
+	}
+	delete(in, "_async") // remove the async parameter after parsing so vfs operations don't get confused
+	if isAsync {
+		ctx = context.Background() // unlink this job from the current context
+	}
 
 	group := getGroup(in)
 	if group == "" {
@@ -199,7 +209,7 @@ func (jobs *Jobs) NewJob(ctx context.Context, in rc.Params) (*Job, context.Conte
 		// Wait for cancel to propagate before returning.
 		<-ctx.Done()
 	}
-	job := &Job{
+	job = &Job{
 		ID:        id,
 		Group:     group,
 		StartTime: time.Now(),
@@ -208,31 +218,23 @@ func (jobs *Jobs) NewJob(ctx context.Context, in rc.Params) (*Job, context.Conte
 	jobs.mu.Lock()
 	jobs.jobs[job.ID] = job
 	jobs.mu.Unlock()
-	return job, ctx
+	if isAsync {
+		go job.run(ctx, fn, in)
+		out = make(rc.Params)
+		out["jobid"] = job.ID
+		err = nil
+	} else {
+		job.run(ctx, fn, in)
+		out = job.Output
+		err = job.realErr
+	}
+	return job, out, err
 }
 
-// NewAsyncJob start a new asynchronous Job off
-func (jobs *Jobs) NewAsyncJob(fn rc.Func, in rc.Params) *Job {
-	job, ctx := jobs.NewJob(context.Background(), in)
-	go job.run(ctx, fn, in)
-	return job
-}
-
-// StartAsyncJob starts a new job asynchronously and returns a Param suitable
-// for output.
-func StartAsyncJob(fn rc.Func, in rc.Params) (rc.Params, error) {
-	job := running.NewAsyncJob(fn, in)
-	out := make(rc.Params)
-	out["jobid"] = job.ID
-	return out, nil
-}
-
-// ExecuteJob executes new job synchronously and returns a Param suitable for
-// output.
-func ExecuteJob(ctx context.Context, fn rc.Func, in rc.Params) (rc.Params, int64, error) {
-	job, ctx := running.NewJob(ctx, in)
-	job.run(ctx, fn, in)
-	return job.Output, job.ID, job.realErr
+// NewJob creates a Job and executes it on the global job queue,
+// possibly in the background if _async is set
+func NewJob(ctx context.Context, fn rc.Func, in rc.Params) (job *Job, out rc.Params, err error) {
+	return running.NewJob(ctx, fn, in)
 }
 
 // OnFinish adds listener to jobid that will be triggered when job is finished.
